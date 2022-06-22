@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Document</title>
+</head>
+
+<body>
+	<script src="three.js"></script>
+	<script src="OrbitControls.js"></script>
+	<script type="module" src="lil-gui.module.min.js"></script>
+	<script type="module" src="ImageUtils.js"></script>
+	<script type="module" src="three.module.js"></script>
+	<script src="//cdnjs.cloudflare.com/ajax/libs/dat-gui/0.5/dat.gui.min.js"></script>
+
+	<script>
+
+		scene = new THREE.Scene();
+
+		const clock = new THREE.Clock();
+
+		camera = new THREE.PerspectiveCamera(90, window.innerWidth / window.innerHeight, 0.1, 9000000);
+		camera.position.set(0, 0, 120);
+
+
+		renderer = new THREE.WebGLRenderer();
+		//renderer.setPixelRatio(window.devicePixelRatio);
+		renderer.setSize(window.innerWidth, window.innerHeight);
+		document.body.appendChild(renderer.domElement);
+
+		// make page responsive
+		window.addEventListener('resize', function () {
+			var width = window.innerWidth;
+			var height = window.innerHeight;
+			renderer.setSize(width, height);
+			camera.aspect = width / height;
+			camera.updateProjectionMatrix();
+		});
+
+		// for control camera
+		controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+		let r = 4;
+		let length_nose = 8
+		let length_body = 20
+		//cylinder  
+		let texture = new THREE.TextureLoader().load('images/rocket.bmp');
+		let geometry = new THREE.CylinderGeometry(r, r, length_body, 32);
+		let material = new THREE.MeshBasicMaterial({ map: texture });
+		let cylinder = new THREE.Mesh(geometry, material);
+
+
+		// flag
+		geometry = new THREE.CylinderGeometry(0, 1.8, 11, 32);
+		material = new THREE.MeshBasicMaterial({ color: 'white' });
+
+		let flag1 = new THREE.Mesh(geometry, material);
+		let flag2 = new THREE.Mesh(geometry, material);
+
+
+		// cone
+		geometry = new THREE.ConeGeometry(r, length_nose, 16);
+		material = new THREE.MeshBasicMaterial({ color: 'white' });
+		let cone = new THREE.Mesh(geometry, material);
+
+		// rocket
+		let rocket = new THREE.Group();
+
+		// earth
+		texture = new THREE.TextureLoader().load('images/earthmap1k.jpg');
+		geometry = new THREE.SphereGeometry(40000, 32, 16);
+		material = new THREE.MeshBasicMaterial({ map: texture });
+		sphere = new THREE.Mesh(geometry, material);
+		sphere.position.y = -40000
+		sphere.rotation.x = -100
+		scene.add(sphere);
+
+		var skybox
+		// sky box
+		texture = new THREE.TextureLoader().load('images/sky_lf.bmp');
+		geometry = new THREE.SphereGeometry(100000, 32, 16);
+		material = new THREE.MeshBasicMaterial({ map: texture });
+		material.side = THREE.BackSide;
+		skybox = new THREE.Mesh(geometry, material);
+		skybox.position.y = -3500
+		scene.add(skybox);
+
+
+		// space box
+		texture = new THREE.TextureLoader().load('images/space_up.png');
+		geometry = new THREE.SphereGeometry(400000, 32, 16);
+		material = new THREE.MeshBasicMaterial({ map: texture });
+		material.side = THREE.BackSide;
+		cube = new THREE.Mesh(geometry, material);
+		cube.position.y = -3500
+		scene.add(cube);
+
+		//draw line
+		material = new THREE.LineBasicMaterial({ color: 0x0000ff });
+		points = [];
+		points.push(new THREE.Vector3(-5, 1000, 0));
+		points.push(new THREE.Vector3(-5, -11, 0));
+		points.push(new THREE.Vector3(1000, -11, 0));
+		geometry = new THREE.BufferGeometry().setFromPoints(points);
+		var line = new THREE.Line(geometry, material);
+		line.position.set(0, 0, 0);
+		scene.add(line);
+
+
+		//variable
+
+		const loc = new THREE.Vector3(rocket.position.x, rocket.position.y, rocket.position.z);
+		let thrust = 300000;
+		const acc = new THREE.Vector3(0, 0, 0);
+		let time_thrust = 300;
+		let time = 0;
+		let time_for_go = 0;
+		let dt = 0.1;
+		let an = length_nose * (r + r) / 2   //مساحة رأس الصاروخ 
+		let ab = length_body * (r + r)   //مساحة جسم الصاروخ 
+		let dn = length_body + (length_nose / 3)  //المسافة  بين الخط المرجعي 
+		//add 
+		let df = length_body / 4;
+		let db = length_body / 2
+		let cpn = an * dn  //مركز ضغط الرأس 
+		let cpb = ab * db   // مركز ضغط الجسم
+		let cd = 1; // ثابت مقاومة الهواء
+		const v = new THREE.Vector3(0, 0, 0); // شعاع السرعة
+		let y = v.angleTo(new THREE.Vector3(v.x, 0, 0)); // الزاوية بين شعاع السرعة ومحور الاكسات
+		const v0 = new THREE.Vector3(0, 0, 0); // قيمة مساعدة
+		let angle_thrust = 0; // زاوية ميلان الفوهة 
+		let v_angle = 0; // السرعة الزاوية 
+		let angle_the_rocket = Math.PI / 2; // الزاوية بين محور الصاروخ ومحور الاكسات
+		const total_force = new THREE.Vector3(0, 0, 0); // مجموع القوى 
+		let mass_nose = 400 // كتلة الرأس
+		let mass_body = 900 // كتلة الجسم 
+		//add
+		let mass_fuel = 300;
+		let mass = mass_body + mass_nose + mass_fuel // الكتلة الكلية 
+		let gravity = gravit();
+		//add 
+		let wf = mass_fuel * gravity
+		let wn = mass_nose * gravity // وزن االرأس
+		let wb = mass_body * gravity //وزن الجسم 
+		let area = an + ab; // المساحة الكلية 
+		let wight = mass * gravity; // الوزن الكلي
+		// let temp = calc_temp(rocket.position.y)
+		// let pressure = calc_pressure(rocket.position.y, temp, gravity)
+		let density = calc_density();  // كثافة الهواء 
+		let a
+
+
+		//gui
+		change = {
+			thrust: 0,
+			time_thrust: 0,
+			angle_thrust: 0,
+			r: 0,
+			length_body: 0,
+			length_nose: 0,
+			mass_body: 0,
+			mass_nose: 0,
+			mass_fuel: 0,
+			go: false,
+		}
+
+		let gui = new dat.GUI();
+		gui.add(change, 'thrust', 1000, 300000, 1000);
+		gui.add(change, 'time_thrust', 200, 2000, 100);
+		gui.add(change, 'angle_thrust', 0, 10, 1);
+		gui.add(change, 'r', 3, 15, 1);
+		gui.add(change, 'length_body', 20, 100, 1000);
+		gui.add(change, 'length_nose', 10, 50, 10);
+		gui.add(change, 'mass_body', 1000, 5000, 100);
+		gui.add(change, 'mass_nose', 200, 3000, 100);
+		gui.add(change, 'mass_fuel', 300, 700, 100);
+		gui.add(change, 'go').onChange(() => {
+			go = true;
+			thrust = change.thrust;
+			time_thrust = change.time_thrust;
+			angle_thrust = change.angle_thrust / 1000;
+			r: change.r;
+			length_body = change.length_body;
+			length_nose = change.length_nose;
+			mass_body = change.mass_body;
+			mass_nose = change.mass_nose;
+			mass_fuel = change.mass_fuel;
+			angle_the_rocket -= angle_thrust
+
+			//cylinder  
+			texture = new THREE.TextureLoader().load('images/rocket.bmp');
+			geometry = new THREE.CylinderGeometry(r, r, length_body, 32);
+			material = new THREE.MeshBasicMaterial({ map: texture });
+			cylinder = new THREE.Mesh(geometry, material);
+			cylinder.position.set(0, 0, 0);
+			cylinder.rotation.y = Math.PI
+			// scene.add(cylinder);
+
+			// flag
+			geometry = new THREE.CylinderGeometry(0, 1.8, 11, 32);
+			material = new THREE.MeshBasicMaterial({ color: 'white' });
+
+			flag1 = new THREE.Mesh(geometry, material);
+			flag2 = new THREE.Mesh(geometry, material);
+
+			//add
+			flag1.position.set(r + 1, -length_body / 2 + 6, 0);
+			flag2.position.set(-r - 1, -length_body / 2 + 6, 0);
+
+			flag1.rotation.z = 0.15
+			flag2.rotation.z = -0.15
+
+			flag1.scale.z = 0.4
+			flag2.scale.z = 0.4
+
+			// cone
+			geometry = new THREE.ConeGeometry(r, length_nose, 16);
+			material = new THREE.MeshBasicMaterial({ color: 'white' });
+			cone = new THREE.Mesh(geometry, material);
+			cone.position.x = cylinder.position.x
+			//add
+			cone.position.y = length_body / 2 + 4
+			cone.position.z = cylinder.position.z
+			// scene.add(cone);
+
+			// rocket
+			rocket = new THREE.Group();
+			rocket.add(flag1)
+			rocket.add(flag2)
+			rocket.add(cylinder)
+			rocket.add(cone)
+			rocket.position.set(0, 0, 0);
+			scene.add(rocket)
+		});
+
+
+
+		// physic
+		var update = function () {
+
+
+			if (wight < thrust) {
+				time_for_go++;
+				if (time_for_go > 300) {
+					//replace
+					gravity = gravit();
+					//add
+					dm = 1;
+					if (mass_fuel > 0)
+						mass_fuel -= dm
+					else
+						mass_fuel = 0;
+					mass = mass_fuel + mass_body + mass_nose
+					wight = mass * gravity;
+					wn = mass_nose * gravity
+					wb = mass_body * gravity
+					wf = mass_fuel * gravity
+
+					density = calc_density();
+
+
+					time += dt;
+					ci = 2 * (angle_the_rocket - y)//a;
+					// ci ثابت مقاومة الرفع
+					// angle_the_rocket - y زاوية الهجوم 
+
+					D = (cd * density * area * v.length() * v.length()) / 2;  // قوة السحب
+					L = (ci * density * area * v.length() * v.length()) / 2;  // قوة الرفع
+
+
+
+					//speed up
+					total_force.set(0, 0, 0);
+
+					if (time < time_thrust) {
+
+						y = v.angleTo(new THREE.Vector3(v.x, 0, 0));// الزاوية بين شعاع السرعة ومجور الاكسات 
+						a = rocket.position.angleTo(v);// الزاوية بين الصاروخ وشعاع السرعة 
+						total_force.add(new THREE.Vector3(thrust * Math.cos(angle_the_rocket), thrust * Math.sin(angle_the_rocket), 0));// اضافة قوة الدفع على مجموع القوى 
+
+
+						Dx = D * v.x * Math.cos(y + Math.PI)// اسقاط قوة السحب على الاكسات
+						Dy = D * v.y * Math.sin(y + Math.PI)// اسقاط قوة السحب على الوايات
+						total_force.add(new THREE.Vector3(Dx, Dy, 0));// اضافة قوة السحب على مجموع القوى
+
+						Lx = L * v.x * Math.cos(y + Math.PI / 2) // اسقاط قوة الرفع على الاكسات
+						Ly = L * v.y * Math.sin(y + Math.PI / 2)// اسقاط قوة الرفع على الوايات
+						total_force.add(new THREE.Vector3(Lx, Ly, 0));// اضافة قوة الرفع على مجموع القوى
+
+
+
+						total_force.add(new THREE.Vector3(0, -wight, 0));  // اضافة قوة الثقل على مجموع القوى
+
+						acc.copy(total_force.multiplyScalar(1 / mass));  // حساب التسارع من قانون نيوتن الثاني 
+
+						v.add(acc.multiplyScalar(dt));  // حساب السرعة من خلال التسارع 
+
+						v0.copy(v);
+						loc.add(v0.multiplyScalar(dt)); // حساب المسافة من خلال السرعة 
+
+						Cg = (dn * wn + db * wb + df * wf) / wight;   // حساب مركز الثقل 
+						Cp = (cpn + cpb) / area;// حساب مركز الضغط
+						ct = (Cg - Cp);// المسافة بين مركز الثقل ومركز الضغط 
+						//add
+						if (ct < 0) {
+							alert("you have mistake in calculate center of pruser you should incrase wight or decrase area")
+						}
+						console.log(" cg " + Cg + "  cp  = " + Cp + "  ct = " + ct)
+
+						Lr = ct * Math.sin(a - (Math.PI / 2)) * L;   //  عزم قوة الرفع 
+						Dr = ct * Math.sin(a) * D;  // عزم قوة السحب 
+
+						I = 0.5 * mass * r * r; // عزم العطالة 
+
+						arr_angle = (Dr + Lr) / I;  // التسارع الزاوي 
+
+						v_angle = v_angle + arr_angle * dt;  // السرعة الزاوية الجديدة 
+
+						angle_the_rocket = angle_the_rocket + v_angle * dt;  // زاوية انحراف الصاروخ الجديدة 
+
+					}
+					else {
+						// في حال نفاذ الوقود 
+
+						total_force.add(new THREE.Vector3(0, -wight, 0));
+
+						acc.copy(total_force.multiplyScalar(1 / mass));
+
+						v.add(acc.multiplyScalar(dt));
+
+						v0.copy(v);
+						loc.add(v0.multiplyScalar(dt));
+
+					}
+
+				}
+			}
+			else {
+				alert("الوزن اكبر من قوة الدفع")
+			}
+
+		}
+
+		// draw scene
+		var render = function () {
+			renderer.render(scene, camera);
+		}
+		// run game loop(update,scene,,repeat)
+
+
+		function Loop() {
+
+			requestAnimationFrame(Loop);
+			if (change.go) {
+
+				rocket.position.x = loc.x;
+				rocket.position.y = loc.y;
+				//add
+				rocket.rotation.z = y - Math.PI / 2;
+
+
+				material = new THREE.LineBasicMaterial({ color: 0x0000ff });
+				camera.position.y = loc.y
+				camera.position.x = loc.x
+				camera.lookAt(rocket.position)
+
+
+				if (rocket.position.y < -12) {
+					alert('the tome_thrust ended')
+				}
+
+				if (rocket.position.y > 9500) {
+					skybox.visible = false
+				}
+				else {
+					skybox.visible = true
+				}
+
+				//add
+				if (!(rocket.position.y * 10 > 83000 && time > time_thrust))
+					update();
+			}
+			render();
+		}
+
+		Loop();
+		function calc_density() {
+
+			rocket_h = rocket.position.y * 10
+
+			if (rocket_h > 82345) {
+
+				T = -205.05 + (0.00164 * rocket_h)
+				up_t = T + 459.7
+				p = 51.97 * Math.pow((up_t / 389.98), -11.388)
+				den = p / (1718 * (T + 459.7))
+
+				return den
+			}
+			else if (rocket_h > 36152 && rocket_h < 82345) {
+				T = -70
+				h_above_e = 1.37 - (0.000048 * rocket_h)
+				p = 473.1 * Math.pow(2.71828, 1.73 - h_above_e)
+				den = p / (1718 * (T + 459.7))
+				return den
+			}
+			else if (rocket_h < 36152) {
+				T = 59 - (0.00356 * rocket_h)
+				up_t = T + 459.7
+				up_t_p = up_t / 518.6
+				p = 2116 * Math.pow(up_t_p, 5.256)
+				den = p / (1718 * (T + 459.7))
+				return den
+			}
+			return den
+		}
+		function gravit() {
+			r_earth = 6378000
+			r_e = r_earth * r_earth;
+			r_e_h = r_earth + rocket.position.y;
+			reh = r_e_h * r_e_h;
+			re_to_reh = r_e / reh
+			c = 9.8 * re_to_reh
+
+			return c;
+		}
+	</script>
+</body>
+
+</html>
